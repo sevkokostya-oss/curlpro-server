@@ -69,6 +69,7 @@ app.post('/tg/webhook', async (req, res) => {
   const chatId = msg.chat.id;
   const text   = (msg.text || '').trim();
   const db     = loadDB();
+
   console.log('[TG] message from', chatId, ':', text);
 
   if (text.startsWith('/start')) {
@@ -114,7 +115,7 @@ app.post('/yoomoney/webhook', async (req, res) => {
   const body = req.body || {};
   console.log('[YOOMONEY] Webhook received');
 
-  if (YOOMONEY_SECRET) {
+  if (YOOMONEY_SECRET && body.sha1_hash) {
     const str = [
       body.notification_type, body.operation_id, body.amount,
       body.currency, body.datetime, body.sender,
@@ -135,7 +136,7 @@ app.post('/yoomoney/webhook', async (req, res) => {
   do { code = generateCode(); } while (db.codes[code]);
   db.codes[code] = { createdAt: new Date().toISOString(), payer: body.sender, amount: body.amount };
   saveDB(db);
-  console.log('[YOOMONEY] Payment received -> code:', code);
+  console.log('[YOOMONEY] Payment', body.amount, '-> code:', code);
 
   const label  = (body.label || '').toString().trim();
   const chatId = label ? db.tg_users['uid_' + label] : null;
@@ -152,7 +153,7 @@ app.post('/yoomoney/webhook', async (req, res) => {
     );
     console.log('[TG] Code sent to chatId:', chatId);
   } else {
-    console.log('[TG] chatId not found for label:', label, '| code saved:', code);
+    console.log('[TG] chatId not found for label:', label, '| code:', code);
   }
 });
 
