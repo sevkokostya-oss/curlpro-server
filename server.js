@@ -1,8 +1,3 @@
-/**
- * CurlPro — Сервер активации + Telegram бот
- * Деплой: Railway.app
- */
-
 const express = require('express');
 const crypto  = require('crypto');
 const fs      = require('fs');
@@ -12,7 +7,7 @@ const https   = require('https');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-const TG_TOKEN        = process.env.TG_TOKEN        || '8304572889:AAE8lW1uBxq15LSHQpqHo-T2rtin0ziXv9w';
+const TG_TOKEN        = process.env.TG_TOKEN        || '';
 const ADMIN_SECRET    = process.env.ADMIN_SECRET    || 'admin123';
 const YOOMONEY_SECRET = process.env.YOOMONEY_SECRET || '';
 const SERVER_URL      = process.env.SERVER_URL      || '';
@@ -59,23 +54,6 @@ function tgSend(chatId, text) {
   });
 }
 
-function setTelegramWebhook(url) {
-  const body = JSON.stringify({ url: `${url}/tg/webhook`, drop_pending_updates: true });
-  const req = https.request({
-    hostname: 'api.telegram.org',
-    path: `/bot${TG_TOKEN}/setWebhook`,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
-  }, res => {
-    let d = '';
-    res.on('data', c => d += c);
-    res.on('end', () => console.log('[TG] Webhook установлен:', d));
-  });
-  req.write(body);
-  req.end();
-}
-
-// ── Telegram webhook ──
 app.post('/tg/webhook', async (req, res) => {
   res.sendStatus(200);
   const update = req.body;
@@ -86,50 +64,43 @@ app.post('/tg/webhook', async (req, res) => {
   const db     = loadDB();
 
   if (text.startsWith('/start')) {
-    // Получаем uid из параметра /start uid123
     const parts = text.split(' ');
     const uid   = parts[1] ? parts[1].trim() : null;
-
-    // Сохраняем chatId и привязываем к uid сайта
     db.tg_users[chatId] = {
       username: msg.from.username || '',
       first_name: msg.from.first_name || '',
       registered_at: new Date().toISOString(),
       uid: uid
     };
-    // Привязка uid → chatId для поиска при webhook
-    if (uid) db.tg_users[`uid_${uid}`] = chatId;
+    if (uid) db.tg_users['uid_' + uid] = chatId;
     saveDB(db);
-
     await tgSend(chatId,
-      `🥌 <b>Добро пожаловать в CurlPro!</b>\n\n` +
-      `Ты зарегистрирован! После оплаты 99 ₽ код придёт сюда автоматически.\n\n` +
-      `<b>Теперь нажми «Перейти к оплате» на сайте</b> и оплати 99 ₽.\n` +
-      `Код придёт сюда в течение минуты ✅`
+      '🥌 <b>Добро пожаловать в CurlPro!</b>\n\n' +
+      'Ты зарегистрирован! После оплаты 99 ₽ код придёт сюда автоматически.\n\n' +
+      '<b>Теперь нажми «Перейти к оплате» на сайте</b> и оплати 99 ₽.\n' +
+      'Код придёт сюда в течение минуты ✅'
     );
     return;
   }
 
   await tgSend(chatId,
-    `🥌 <b>CurlPro</b>\n\nПосле оплаты 99 ₽ код придёт сюда автоматически.\n\nТвой ID: <code>${chatId}</code>`
+    '🥌 <b>CurlPro</b>\n\nПосле оплаты 99 ₽ код придёт сюда автоматически.\n\nТвой ID: <code>' + chatId + '</code>'
   );
 });
 
-// ── Активация кода ──
 app.post('/activate', (req, res) => {
   const { code } = req.body || {};
   if (!code) return res.json({ success: false, error: 'no_code' });
   const db  = loadDB();
   const key = code.trim().toUpperCase();
-  if (!db.codes[key])  return res.json({ success: false, error: 'invalid_code' });
-  if (db.used[key])    return res.json({ success: false, error: 'already_used' });
+  if (!db.codes[key]) return res.json({ success: false, error: 'invalid_code' });
+  if (db.used[key])   return res.json({ success: false, error: 'already_used' });
   db.used[key] = { usedAt: new Date().toISOString() };
   saveDB(db);
-  console.log(`[ACTIVATE] Код использован: ${key}`);
+  console.log('[ACTIVATE] Код использован: ' + key);
   return res.json({ success: true, days: 30 });
 });
 
-// ── ЮМани webhook ──
 app.post('/yoomoney/webhook', async (req, res) => {
   res.sendStatus(200);
   const body = req.body;
@@ -156,29 +127,27 @@ app.post('/yoomoney/webhook', async (req, res) => {
   do { code = generateCode(); } while (db.codes[code]);
   db.codes[code] = { createdAt: new Date().toISOString(), payer: body.sender, amount: body.amount };
   saveDB(db);
-  console.log(`[YOOMONEY] Оплата ${body.amount}₽ → код: ${code}`);
+  console.log('[YOOMONEY] Оплата ' + body.amount + '₽ → код: ' + code);
 
-  // Ищем покупателя по label (= uid сайта) → chatId
-  const label   = (body.label || '').toString().trim();
-  const chatId  = label ? db.tg_users[`uid_${label}`] : null;
+  const label  = (body.label || '').toString().trim();
+  const chatId = label ? db.tg_users['uid_' + label] : null;
   if (chatId) {
     await tgSend(chatId,
-      `✅ <b>Оплата получена! Спасибо!</b>\n\n` +
-      `Твой код активации CurlPro на 30 дней:\n\n` +
-      `<code>${code}</code>\n\n` +
-      `<b>Как активировать:</b>\n` +
-      `1. Открой сайт CurlPro\n` +
-      `2. Нажми «У меня есть код активации»\n` +
-      `3. Введи код выше\n` +
-      `4. Готово — 30 дней доступа! 🥌`
+      '✅ <b>Оплата получена! Спасибо!</b>\n\n' +
+      'Твой код активации CurlPro на 30 дней:\n\n' +
+      '<code>' + code + '</code>\n\n' +
+      '<b>Как активировать:</b>\n' +
+      '1. Открой сайт CurlPro\n' +
+      '2. Нажми «У меня есть код активации»\n' +
+      '3. Введи код выше\n' +
+      '4. Готово — 30 дней доступа! 🥌'
     );
-    console.log(`[TG] Код отправлен пользователю chatId=${chatId} uid=${label}`);
+    console.log('[TG] Код отправлен chatId=' + chatId);
   } else {
-    console.log(`[TG] chatId не найден для label: "${label}"`);
+    console.log('[TG] chatId не найден для label: ' + label);
   }
 });
 
-// ── Генерация кодов (админ) ──
 app.post('/admin/generate', (req, res) => {
   const { secret, count = 1 } = req.body || {};
   if (secret !== ADMIN_SECRET) return res.status(403).json({ error: 'forbidden' });
@@ -191,11 +160,10 @@ app.post('/admin/generate', (req, res) => {
     newCodes.push(code);
   }
   saveDB(db);
-  console.log(`[ADMIN] Создано ${newCodes.length} кодов`);
+  console.log('[ADMIN] Создано ' + newCodes.length + ' кодов');
   return res.json({ success: true, codes: newCodes });
 });
 
-// ── Статистика (админ) ──
 app.get('/admin/stats', (req, res) => {
   if (req.query.secret !== ADMIN_SECRET) return res.status(403).json({ error: 'forbidden' });
   const db = loadDB();
@@ -213,7 +181,5 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ CurlPro сервер v2 запущен на порту ${PORT}`);
-  if (SERVER_URL) setTelegramWebhook(SERVER_URL);
-  else console.log('[TG] SERVER_URL не задан — установи в Railway Variables');
+  console.log('✅ CurlPro сервер v2 запущен на порту ' + PORT);
 });
