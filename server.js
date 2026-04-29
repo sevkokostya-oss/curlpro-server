@@ -2,7 +2,6 @@ const express = require('express');
 const crypto  = require('crypto');
 const fs      = require('fs');
 const path    = require('path');
-const https   = require('https');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -35,34 +34,19 @@ function loadDB() {
 function saveDB(db) { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); }
 function generateCode() { return crypto.randomBytes(4).toString('hex').toUpperCase(); }
 
-function tgSend(chatId, text) {
-  return new Promise((resolve) => {
-    const payload = { chat_id: chatId, text: text, parse_mode: 'HTML' };
-    const buf = Buffer.from(JSON.stringify(payload), 'utf8');
-    const options = {
-      hostname: 'api.telegram.org',
-      port: 443,
-      path: '/bot' + TG_TOKEN + '/sendMessage',
+async function tgSend(chatId, text) {
+  try {
+    const url = 'https://api.telegram.org/bot' + TG_TOKEN + '/sendMessage';
+    const resp = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': buf.length
-      }
-    };
-    const req = https.request(options, function(res2) {
-      var d = '';
-      res2.on('data', function(c) { d += c; });
-      res2.on('end', function() {
-        try { resolve(JSON.parse(d)); } catch(e) { resolve(null); }
-      });
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: text, parse_mode: 'HTML' })
     });
-    req.on('error', function(e) {
-      console.error('[TG error]', e.message);
-      resolve(null);
-    });
-    req.write(buf);
-    req.end();
-  });
+    return await resp.json();
+  } catch(e) {
+    console.error('[TG error]', e.message);
+    return null;
+  }
 }
 
 app.post('/tg/webhook', async function(req, res) {
@@ -88,15 +72,18 @@ app.post('/tg/webhook', async function(req, res) {
     if (uid) db.tg_users['uid_' + uid] = chatId;
     saveDB(db);
     console.log('[TG] /start chatId:', chatId, 'uid:', uid);
-    var welcome = '<b>Dobro pozhalovat v CurlPro!</b>\n\n' +
+    await tgSend(chatId,
+      '<b>Dobro pozhalovat v CurlPro!</b>\n\n' +
       'Ty zaregistrirovan! Posle oplaty 99 rub. kod pridet syuda avtomaticheski.\n\n' +
-      'Nazhmite Perejti k oplate na sajte i oplatite 99 rub.\n' +
-      'Kod pridet syuda v techenie minuty';
-    await tgSend(chatId, welcome);
+      'Nazhmi Perejti k oplate na sajte i oplati 99 rub.\n' +
+      'Kod pridet syuda v techenie minuty'
+    );
     return;
   }
 
-  await tgSend(chatId, '<b>CurlPro</b>\n\nPosle oplaty 99 rub. kod pridet avtomaticheski.\n\nVash ID: <code>' + chatId + '</code>');
+  await tgSend(chatId,
+    '<b>CurlPro</b>\n\nPosle oplaty 99 rub. kod pridet avtomaticheski.\n\nVash ID: <code>' + chatId + '</code>'
+  );
 });
 
 app.post('/activate', function(req, res) {
@@ -143,15 +130,16 @@ app.post('/yoomoney/webhook', async function(req, res) {
   var label = (body.label || '').toString().trim();
   var chatId = label ? db.tg_users['uid_' + label] : null;
   if (chatId) {
-    var msg = 'Oplata poluchena! Spasibo!\n\n' +
+    await tgSend(chatId,
+      'Oplata poluchena! Spasibo!\n\n' +
       'Vash kod aktivacii CurlPro na 30 dnej:\n\n' +
       '<code>' + code + '</code>\n\n' +
       'Kak aktivirovat:\n' +
       '1. Otkroj sajt CurlPro\n' +
-      '2. Nazhmi U menya est kod aktivacii\n' +
+      '2. Nazhmi - U menya est kod aktivacii\n' +
       '3. Vvedi kod vyshe\n' +
-      '4. Gotovo - 30 dnej dostupa!';
-    await tgSend(chatId, msg);
+      '4. Gotovo - 30 dnej dostupa!'
+    );
     console.log('[TG] Code sent to', chatId);
   } else {
     console.log('[TG] chatId not found for label:', label, 'code:', code);
