@@ -38,18 +38,19 @@ function generateCode() { return crypto.randomBytes(4).toString('hex').toUpperCa
 function tgSend(chatId, text) {
   return new Promise((resolve) => {
     const body = JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' });
-    const req = https.request({
+    const buf  = Buffer.from(body, 'utf8');
+    const req  = https.request({
       hostname: 'api.telegram.org',
-      path: `/bot${TG_TOKEN}/sendMessage`,
+      path: '/bot' + TG_TOKEN + '/sendMessage',
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+      headers: { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': buf.length }
     }, (res) => {
       let d = '';
       res.on('data', c => d += c);
-      res.on('end', () => resolve(JSON.parse(d)));
+      res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { resolve(null); } });
     });
-    req.on('error', e => { console.error('[TG]', e); resolve(null); });
-    req.write(body);
+    req.on('error', e => { console.error('[TG error]', e.message); resolve(null); });
+    req.write(buf);
     req.end();
   });
 }
@@ -63,6 +64,8 @@ app.post('/tg/webhook', async (req, res) => {
   const text   = (msg.text || '').trim();
   const db     = loadDB();
 
+  console.log('[TG] message from', chatId, ':', text);
+
   if (text.startsWith('/start')) {
     const parts = text.split(' ');
     const uid   = parts[1] ? parts[1].trim() : null;
@@ -74,17 +77,17 @@ app.post('/tg/webhook', async (req, res) => {
     };
     if (uid) db.tg_users['uid_' + uid] = chatId;
     saveDB(db);
+    console.log('[TG] /start from chatId:', chatId, 'uid:', uid);
     await tgSend(chatId,
-      '🥌 <b>Добро пожаловать в CurlPro!</b>\n\n' +
-      'Ты зарегистрирован! После оплаты 99 ₽ код придёт сюда автоматически.\n\n' +
-      '<b>Теперь нажми «Перейти к оплате» на сайте</b> и оплати 99 ₽.\n' +
-      'Код придёт сюда в течение минуты ✅'
+      '\u{1F3A3} <b>\u0414\u043e\u0431\u0440\u043e \u043f\u043e\u0436\u0430\u043b\u043e\u0432\u0430\u0442\u044c \u0432 CurlPro!</b>\n\n' +
+      '\u0422\u044b \u0437\u0430\u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043e\u0432\u0430\u043d! \u041f\u043e\u0441\u043b\u0435 \u043e\u043f\u043b\u0430\u0442\u044b 99 \u20bd \u043a\u043e\u0434 \u043f\u0440\u0438\u0434\u0451\u0442 \u0441\u044e\u0434\u0430 \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438.\n\n' +
+      '\u0422\u0435\u043f\u0435\u0440\u044c \u043d\u0430\u0436\u043c\u0438 \u00ab\u041f\u0435\u0440\u0435\u0439\u0442\u0438 \u043a \u043e\u043f\u043b\u0430\u0442\u0435\u00bb \u043d\u0430 \u0441\u0430\u0439\u0442\u0435 \u0438 \u043e\u043f\u043b\u0430\u0442\u0438 99 \u20bd. \u041a\u043e\u0434 \u043f\u0440\u0438\u0434\u0451\u0442 \u0441\u044e\u0434\u0430 \u0432 \u0442\u0435\u0447\u0435\u043d\u0438\u0435 \u043c\u0438\u043d\u0443\u0442\u044b \u2705'
     );
     return;
   }
 
   await tgSend(chatId,
-    '🥌 <b>CurlPro</b>\n\nПосле оплаты 99 ₽ код придёт сюда автоматически.\n\nТвой ID: <code>' + chatId + '</code>'
+    '\u{1F3A3} <b>CurlPro</b>\n\n\u041f\u043e\u0441\u043b\u0435 \u043e\u043f\u043b\u0430\u0442\u044b 99 \u20bd \u043a\u043e\u0434 \u043f\u0440\u0438\u0434\u0451\u0442 \u0441\u044e\u0434\u0430 \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438.\n\n\u0422\u0432\u043e\u0439 ID: <code>' + chatId + '</code>'
   );
 });
 
@@ -97,14 +100,14 @@ app.post('/activate', (req, res) => {
   if (db.used[key])   return res.json({ success: false, error: 'already_used' });
   db.used[key] = { usedAt: new Date().toISOString() };
   saveDB(db);
-  console.log('[ACTIVATE] Код использован: ' + key);
+  console.log('[ACTIVATE] Code used:', key);
   return res.json({ success: true, days: 30 });
 });
 
 app.post('/yoomoney/webhook', async (req, res) => {
   res.sendStatus(200);
   const body = req.body;
-  console.log('[YOOMONEY] Получен webhook:', body);
+  console.log('[YOOMONEY] Webhook received:', JSON.stringify(body));
 
   if (YOOMONEY_SECRET) {
     const str = [
@@ -114,7 +117,7 @@ app.post('/yoomoney/webhook', async (req, res) => {
     ].join('&');
     const hash = crypto.createHash('sha1').update(str).digest('hex');
     if (hash !== body.sha1_hash) {
-      console.log('[YOOMONEY] Неверная подпись!');
+      console.log('[YOOMONEY] Invalid signature!');
       return;
     }
   }
@@ -127,24 +130,24 @@ app.post('/yoomoney/webhook', async (req, res) => {
   do { code = generateCode(); } while (db.codes[code]);
   db.codes[code] = { createdAt: new Date().toISOString(), payer: body.sender, amount: body.amount };
   saveDB(db);
-  console.log('[YOOMONEY] Оплата ' + body.amount + '₽ → код: ' + code);
+  console.log('[YOOMONEY] Payment', body.amount, '-> code:', code);
 
   const label  = (body.label || '').toString().trim();
   const chatId = label ? db.tg_users['uid_' + label] : null;
   if (chatId) {
     await tgSend(chatId,
-      '✅ <b>Оплата получена! Спасибо!</b>\n\n' +
-      'Твой код активации CurlPro на 30 дней:\n\n' +
+      '\u2705 <b>\u041e\u043f\u043b\u0430\u0442\u0430 \u043f\u043e\u043b\u0443\u0447\u0435\u043d\u0430! \u0421\u043f\u0430\u0441\u0438\u0431\u043e!</b>\n\n' +
+      '\u0422\u0432\u043e\u0439 \u043a\u043e\u0434 \u0430\u043a\u0442\u0438\u0432\u0430\u0446\u0438\u0438 CurlPro \u043d\u0430 30 \u0434\u043d\u0435\u0439:\n\n' +
       '<code>' + code + '</code>\n\n' +
-      '<b>Как активировать:</b>\n' +
-      '1. Открой сайт CurlPro\n' +
-      '2. Нажми «У меня есть код активации»\n' +
-      '3. Введи код выше\n' +
-      '4. Готово — 30 дней доступа! 🥌'
+      '<b>\u041a\u0430\u043a \u0430\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u0442\u044c:</b>\n' +
+      '1. \u041e\u0442\u043a\u0440\u043e\u0439 \u0441\u0430\u0439\u0442 CurlPro\n' +
+      '2. \u041d\u0430\u0436\u043c\u0438 \u00ab\u0423 \u043c\u0435\u043d\u044f \u0435\u0441\u0442\u044c \u043a\u043e\u0434 \u0430\u043a\u0442\u0438\u0432\u0430\u0446\u0438\u0438\u00bb\n' +
+      '3. \u0412\u0432\u0435\u0434\u0438 \u043a\u043e\u0434 \u0432\u044b\u0448\u0435\n' +
+      '4. \u0413\u043e\u0442\u043e\u0432\u043e \u2014 30 \u0434\u043d\u0435\u0439 \u0434\u043e\u0441\u0442\u0443\u043f\u0430! \u{1F3A3}'
     );
-    console.log('[TG] Код отправлен chatId=' + chatId);
+    console.log('[TG] Code sent to chatId:', chatId);
   } else {
-    console.log('[TG] chatId не найден для label: ' + label);
+    console.log('[TG] chatId not found for label:', label, '| code saved:', code);
   }
 });
 
@@ -160,7 +163,7 @@ app.post('/admin/generate', (req, res) => {
     newCodes.push(code);
   }
   saveDB(db);
-  console.log('[ADMIN] Создано ' + newCodes.length + ' кодов');
+  console.log('[ADMIN] Created', newCodes.length, 'codes');
   return res.json({ success: true, codes: newCodes });
 });
 
@@ -181,5 +184,5 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log('✅ CurlPro сервер v2 запущен на порту ' + PORT);
+  console.log('CurlPro server v2 started on port', PORT);
 });
