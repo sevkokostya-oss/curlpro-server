@@ -10,7 +10,6 @@ const PORT = process.env.PORT || 3000;
 const TG_TOKEN        = process.env.TG_TOKEN        || '';
 const ADMIN_SECRET    = process.env.ADMIN_SECRET    || 'admin123';
 const YOOMONEY_SECRET = process.env.YOOMONEY_SECRET || '';
-const SERVER_URL      = process.env.SERVER_URL      || '';
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -19,8 +18,15 @@ app.use((req, res, next) => {
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+app.set('query parser', 'simple');
+
+app.use((req, res, next) => {
+  express.json()(req, res, (err) => { next(); });
+});
+app.use((req, res, next) => {
+  express.urlencoded({ extended: true })(req, res, (err) => { next(); });
+});
 
 const DB_PATH = path.join(__dirname, 'db.json');
 function loadDB() {
@@ -63,7 +69,6 @@ app.post('/tg/webhook', async (req, res) => {
   const chatId = msg.chat.id;
   const text   = (msg.text || '').trim();
   const db     = loadDB();
-
   console.log('[TG] message from', chatId, ':', text);
 
   if (text.startsWith('/start')) {
@@ -77,7 +82,7 @@ app.post('/tg/webhook', async (req, res) => {
     };
     if (uid) db.tg_users['uid_' + uid] = chatId;
     saveDB(db);
-    console.log('[TG] /start from chatId:', chatId, 'uid:', uid);
+    console.log('[TG] /start chatId:', chatId, 'uid:', uid);
     await tgSend(chatId,
       '\u{1F3A3} <b>\u0414\u043e\u0431\u0440\u043e \u043f\u043e\u0436\u0430\u043b\u043e\u0432\u0430\u0442\u044c \u0432 CurlPro!</b>\n\n' +
       '\u0422\u044b \u0437\u0430\u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043e\u0432\u0430\u043d! \u041f\u043e\u0441\u043b\u0435 \u043e\u043f\u043b\u0430\u0442\u044b 99 \u20bd \u043a\u043e\u0434 \u043f\u0440\u0438\u0434\u0451\u0442 \u0441\u044e\u0434\u0430 \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438.\n\n' +
@@ -106,8 +111,8 @@ app.post('/activate', (req, res) => {
 
 app.post('/yoomoney/webhook', async (req, res) => {
   res.sendStatus(200);
-  const body = req.body;
-  console.log('[YOOMONEY] Webhook received:', JSON.stringify(body));
+  const body = req.body || {};
+  console.log('[YOOMONEY] Webhook received');
 
   if (YOOMONEY_SECRET) {
     const str = [
@@ -130,7 +135,7 @@ app.post('/yoomoney/webhook', async (req, res) => {
   do { code = generateCode(); } while (db.codes[code]);
   db.codes[code] = { createdAt: new Date().toISOString(), payer: body.sender, amount: body.amount };
   saveDB(db);
-  console.log('[YOOMONEY] Payment', body.amount, '-> code:', code);
+  console.log('[YOOMONEY] Payment received -> code:', code);
 
   const label  = (body.label || '').toString().trim();
   const chatId = label ? db.tg_users['uid_' + label] : null;
